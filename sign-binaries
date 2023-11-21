@@ -2,7 +2,7 @@
 
 set -e
 
-# sign-keys - Script to sign UEFI secure boot keys.
+# sign-binaries - Script to sign UEFI binaries.
 
 # Abort if a db key does not exist.
 if [ ! -e keys/db.key ]; then
