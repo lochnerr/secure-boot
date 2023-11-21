@@ -19,12 +19,18 @@ fi
 # It should still boot without enrolling the new keys.
 
 sign_bin() {
-  if [ -e $1.original ]; then
-    echo "Info: File ${1} already signed."
+  if [ -e $1.save ]; then
+    if diff $1 $1.save ; then
+      echo "Info: File ${1} does not need to be resigned."
+    else
+      echo "Info: Resigning ${1}."
+      sbsign --key keys/db.key --cert keys/db.crt --output ${1} $1
+      cp -p $1 $1.save
+    fi
   else
-    echo "Info: Creating backup file ${1}.original."
-    cp -p $1 $1.original
+    echo "Info: Signing ${1}."
     sbsign --key keys/db.key --cert keys/db.crt --output ${1} $1
+    cp -p $1 $1.save
   fi
 }
 
