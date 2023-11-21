@@ -19,7 +19,9 @@ fi
 # It should still boot without enrolling the new keys.
 
 sign_bin() {
-  if [ -e $1.save ]; then
+  if [ "$(echo $1 | sed 's/.*\.//')" = "save" ]; then
+    echo "Info: Skipping save file: ${1}."
+  elif [ -e $1.save ]; then
     if diff $1 $1.save ; then
       echo "Info: File ${1} does not need to be resigned."
     else
@@ -34,9 +36,8 @@ sign_bin() {
   fi
 }
 
-# Sign the latest kernel.
-for i in $(ls -t /boot/vmlinuz*) ; do f=$i ; break ; done
-sign_bin $f
+# Try to sign all kernels.
+for i in $(ls -t /boot/vmlinuz*) ; do sign_bin $i ; done
 
 sign_bin /boot/efi/EFI/fedora/shimx64.efi
 sign_bin /boot/efi/EFI/fedora/mmx64.efi
