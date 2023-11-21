@@ -64,12 +64,12 @@ sign-efi-sig-list -g "$(< GUID.txt)" -k KEK.key -c KEK.crt db db.esl db.auth
 ## TODO: Get a dbx file from somewhere
 ##wget https://uefi.org/sites/default/files/resources/dbxupdate_x64.bin
 
-# Notify the user if this system supports install UEFI keys.
+# Notify the user if this system supports enrolling UEFI keys.
 if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" = "1" ]; then
-  echo "Info: This system supports installing UEFI keys."
-  echo "Info: To install your new UEFI keys, run: install-keys"
+  echo "Info: This system supports enrolling UEFI keys."
+  echo "Info: To enroll your new UEFI keys, run: enroll-keys"
 else
-  echo "Info: This system does not support installing UEFI keys."
+  echo "Info: This system does not support enrolling UEFI keys."
 fi
 
 echo "Done!"
