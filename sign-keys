@@ -1,0 +1,42 @@
+#!/bin/sh
+
+set -e
+
+# sign-keys - Script to sign UEFI secure boot keys.
+
+# Abort if a db key does not exist.
+if [ ! -e keys/db.key ]; then
+  echo "Error: keys/db.key not found, aborting!"
+  exit 1
+fi
+
+if [ "$(id -u)" != "0" ]; then
+  echo "Error: Must be root!"
+  exit 1
+fi
+
+# It is safe to sign the binaries with additional keys.
+# It should still boot without enrolling the new keys.
+
+sign_bin() {
+  if [ -e $1.original ]; then
+    echo "Info: File ${1} already signed."
+  else
+    echo "Info: Creating backup file ${1}.original."
+    cp -p $1 $1.original
+    sbsign --key keys/db.key --cert keys/db.crt --output ${1} $1
+  fi
+}
+
+# Sign the latest kernel.
+for i in $(ls -t /boot/vmlinuz*) ; do f=$i ; break ; done
+sign_bin $f
+
+sign_bin /boot/efi/EFI/fedora/shimx64.efi
+sign_bin /boot/efi/EFI/fedora/mmx64.efi
+sign_bin /boot/efi/EFI/fedora/grubx64.efi
+
+echo "Done!"
+
+exit 0
+

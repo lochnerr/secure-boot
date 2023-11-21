@@ -1,0 +1,39 @@
+#!/bin/sh
+
+set -e
+
+# enroll-keys - Script to enroll UEFI secure boot keys.
+
+# Abort if a platform key does not exist.
+if [ ! -e keys/PK.key ]; then
+  echo "Error: keys/PK.key not found, aborting!"
+  exit 1
+fi
+
+if [ "$(id -u)" != "0" ]; then
+  echo "Error: Must be root!"
+  exit 1
+fi
+
+echo "Info: Expecting secure boot to NOT be enabled."
+mokutil --sb-state
+
+# Notify the user if this system supports install UEFI keys.
+if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" != "1" ]; then
+  echo "Error: This system does not support installing UEFI keys, aborting."
+  exit 1
+fi
+
+# Set the EFI variables.
+efi-updatevar -f keys/db.auth db
+efi-updatevar -f keys/KEK.auth KEK
+efi-updatevar -f keys/PK.auth PK
+[ -e keys/dbx ] && efi-updatevar -f keys/dbx.auth dbx
+
+echo "Info: Expecting secure boot to be enabled."
+mokutil --sb-state
+
+echo "Done!"
+
+exit 0
+

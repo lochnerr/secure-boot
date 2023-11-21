@@ -1,0 +1,78 @@
+#!/bin/sh
+
+set -e
+
+# create-keys - Script to create UEFI secure boot keys.
+
+# Abort if a platform key exists.
+if [ -e keys/PK.key ]; then
+  echo "Error: PK.key already exists, aborting!"
+  exit 1
+fi
+
+# Do not allow this to run as root
+if [ "$(id -u)" = "0" ]; then
+  echo "Error: No reason to run this as root, aborting!"
+  exit 1
+fi
+
+# Install the packages needed to support create linux secure boot keys.
+required() {
+  if [ -z "$(command -v $1 2> /dev/null)" ]; then
+    sudo dnf -y install $1
+  fi
+}
+for i in openssl efivar efitools cert-to-efi-sig-list wget git ; do required $i ; done
+
+mkdir -p keys
+cd keys
+
+# Before creating the key pairs, create a globally unique identifier (GUID) to be used in key generation.
+uuidgen --random > GUID.txt
+
+# Create the Platform key. You must name the variable PK.
+openssl req -newkey rsa:4096 -nodes -keyout PK.key -new -x509 -sha256 -days 3650 -subj "/CN=Platform key/" -out PK.crt
+
+# The following parameters are specified:
+#    -keyout PK.key – The private key file.
+#    -days 3650 – The number of days that the certificate is valid.
+#    -out PK.crt – The certificate that is used to create the UEFI variable.
+#    CN=Platform key – The common name (CN) for the key. You can enter the name of your own organization instead of Platform key.
+
+# Create the certificate.
+openssl x509 -outform DER -in PK.crt -out PK.cer
+
+# Convert the certificate into a UEFI signature list.
+cert-to-efi-sig-list -g "$(< GUID.txt)" PK.crt PK.esl
+
+# Sign the UEFI signature list with the private PK (self-signed).
+sign-efi-sig-list -g "$(< GUID.txt)" -k PK.key -c PK.crt PK PK.esl PK.auth
+
+# Do the (Key Exchange Key) KEK
+openssl req -newkey rsa:4096 -nodes -keyout KEK.key -new -x509 -sha256 -days 3650 -subj "/CN=Key Exchange Key/" -out KEK.crt
+openssl x509 -outform DER -in KEK.crt -out KEK.cer
+cert-to-efi-sig-list -g "$(< GUID.txt)" KEK.crt KEK.esl
+sign-efi-sig-list -g "$(< GUID.txt)" -k PK.key -c PK.crt KEK KEK.esl KEK.auth
+
+# Do the Signature Database Key (db)
+
+openssl req -newkey rsa:4096 -nodes -keyout db.key -new -x509 -sha256 -days 3650 -subj "/CN=Signature Database key/" -out db.crt
+openssl x509 -outform DER -in db.crt -out db.cer
+cert-to-efi-sig-list -g "$(< GUID.txt)" db.crt db.esl
+sign-efi-sig-list -g "$(< GUID.txt)" -k KEK.key -c KEK.crt db db.esl db.auth
+
+## TODO: Get a dbx file from somewhere
+##wget https://uefi.org/sites/default/files/resources/dbxupdate_x64.bin
+
+# Notify the user if this system supports install UEFI keys.
+if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" = "1" ]; then
+  echo "Info: This system supports installing UEFI keys."
+  echo "Info: To install your new UEFI keys, run: install-keys"
+else
+  echo "Info: This system does not support installing UEFI keys."
+fi
+
+echo "Done!"
+
+exit 0
+
