@@ -2,74 +2,91 @@
 
 set -e
 
-# create-keys - Script to create UEFI secure boot keys.
+# generate-keys - Script to create UEFI secure boot keys.
 
 # Abort if a platform key exists.
-if [ -e keys/PK.key ]; then
-  echo "Error: PK.key already exists, aborting!"
-  exit 1
+if [ -e certs/PK.key ]; then
+	echo "Error: PK.key already exists, aborting!"
+	exit 1
 fi
 
-# Do not allow this to run as root
-if [ "$(id -u)" = "0" ]; then
-  echo "Error: No reason to run this as root, aborting!"
-  exit 1
-fi
-
-# Install the packages needed to support create linux secure boot keys.
+# Check for required tools.
 required() {
-  if [ -z "$(command -v $1 2> /dev/null)" ]; then
-    sudo dnf -y install $1
-  fi
+	if [ -z "$(command -v $1 2> /dev/null)" ]; then
+		echo "Error: command $1 is not available."
+		req="false"
+	fi
 }
-for i in openssl efivar efitools cert-to-efi-sig-list wget git ; do required $i ; done
+req="true"
+for i in openssl cert-to-efi-sig-list cert-to-efi-sig-list efivar ; do required $i ; done
+# Additional from: https://sysguides.com/fedora-uefi-secure-boot-with-custom-keys/
+[ "$req" != "true" ] && exit 1
 
-mkdir -p keys
-cd keys
+# Make a directory for the keys and certificates
+mkdir -p certs
+cd certs
 
-# Before creating the key pairs, create a globally unique identifier (GUID) to be used in key generation.
+# Create a globally unique identifier (GUID) to be used in signature lists.
 uuidgen --random > GUID.txt
+echo "GUID is $(cat GUID.txt)."
 
-# Create the Platform key. You must name the variable PK.
-openssl req -newkey rsa:4096 -nodes -keyout PK.key -new -x509 -sha256 -days 3650 -subj "/CN=Platform key/" -out PK.crt
+# Create a default config for key/cert generation using openssl.
+cat >PK.cfg <<-__EOD__
+	[ req ]
+	default_bits         = 4096
+	encrypt_key          = no
+	string_mask          = utf8only
+	utf8                 = yes
+	prompt               = no
+	distinguished_name   = my_dist_name
+	x509_extensions      = my_x509_exts
 
-# The following parameters are specified:
-#    -keyout PK.key – The private key file.
-#    -days 3650 – The number of days that the certificate is valid.
-#    -out PK.crt – The certificate that is used to create the UEFI variable.
-#    CN=Platform key – The common name (CN) for the key. You can enter the name of your own organization instead of Platform key.
+	[ my_dist_name ]
+	commonName           = Platform Key
+	#emailAddress         = user@example.com
 
-# Create the certificate.
-openssl x509 -outform DER -in PK.crt -out PK.cer
+	[ my_x509_exts ]
+	keyUsage             = digitalSignature
+	extendedKeyUsage     = codeSigning
+	basicConstraints     = critical,CA:FALSE
+	subjectKeyIdentifier = hash
+	__EOD__
 
-# Convert the certificate into a UEFI signature list.
-cert-to-efi-sig-list -g "$(< GUID.txt)" PK.crt PK.esl
+generate_key() {
 
-# Sign the UEFI signature list with the private PK (self-signed).
-sign-efi-sig-list -g "$(< GUID.txt)" -k PK.key -c PK.crt PK PK.esl PK.auth
+	[ "$1" != "PK" ] && cp -v {PK,$1}.cfg
+	sed -i "s/Platform Key/$2/g" $1.cfg
+	openssl req -x509 -sha256 -days 5490 -outform PEM -config $1.cfg \
+		-keyout $1.key -out $1.crt
+}
 
-# Do the (Key Exchange Key) KEK
-openssl req -newkey rsa:4096 -nodes -keyout KEK.key -new -x509 -sha256 -days 3650 -subj "/CN=Key Exchange Key/" -out KEK.crt
-openssl x509 -outform DER -in KEK.crt -out KEK.cer
-cert-to-efi-sig-list -g "$(< GUID.txt)" KEK.crt KEK.esl
-sign-efi-sig-list -g "$(< GUID.txt)" -k PK.key -c PK.crt KEK KEK.esl KEK.auth
+create_esl_and_auth_files() {
 
-# Do the Signature Database Key (db)
+	# Create an ESL file from a certificate.
+	cert-to-efi-sig-list -g "$(< GUID.txt)" $1.crt $1.esl
 
-openssl req -newkey rsa:4096 -nodes -keyout db.key -new -x509 -sha256 -days 3650 -subj "/CN=Signature Database key/" -out db.crt
-openssl x509 -outform DER -in db.crt -out db.cer
-cert-to-efi-sig-list -g "$(< GUID.txt)" db.crt db.esl
-sign-efi-sig-list -g "$(< GUID.txt)" -k KEK.key -c KEK.crt db db.esl db.auth
+	# Now, sign the esl file using the public and private platform keys (PK.crt and PK.key).
+	sign-efi-sig-list -g "$(< GUID.txt)" \
+		-t "$(date +'%F %T')" \
+		-c PK.crt -k PK.key \
+		$1 \
+		$1.esl $1.auth
+}
 
-## TODO: Get a dbx file from somewhere
-##wget https://uefi.org/sites/default/files/resources/dbxupdate_x64.bin
+generate_key PK  "Platform Key"
+generate_key KEK "Key Exchange Key"
+generate_key db  "Signature Database"
+
+create_esl_and_auth_files PK  $1
+create_esl_and_auth_files KEK $1
+create_esl_and_auth_files db  $1
 
 # Notify the user if this system supports enrolling UEFI keys.
 if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" = "1" ]; then
-  echo "Info: This system supports enrolling UEFI keys."
-  echo "Info: To enroll your new UEFI keys, run: enroll-keys"
+	echo "Info: This system supports enrolling UEFI keys."
+	echo "Info: To enroll your new UEFI keys, run: enroll-keys"
 else
-  echo "Info: This system does not support enrolling UEFI keys."
+	echo "Warning: This system does not support enrolling UEFI keys."
 fi
 
 echo "Done!"
