@@ -1,0 +1,57 @@
+#!/bin/sh
+
+set -e
+
+# Script to backup the EFI Signature List (esl) variables.
+
+if ! command efi-readvar >/dev/null 2>&1 ; then
+	echo "Error: efi-readvar not available!"
+	echo "Info:  This is usually found in the efitools package."
+	exit 1
+fi
+
+backup_esl() {
+
+	file_base="$1"
+	[ -n "$2" ] && file_base="$2_$1"
+	if efi-readvar -v $1 -o ${file_base}.esl | grep "has no entries" >/dev/null 2>&1 ; then
+		echo "Info: Variable $1 has no entries."
+		[ -e ${file_base}.esl ] && rm -f ${file_base}.esl
+		return 0
+	fi
+}
+
+for var in PK KEK db dbx MokList ; do
+	backup_esl $var $1
+done
+
+# Set the default tar file name.
+tarfile="uefi_keys.tgz"
+# If the user specified a prefix, use it.
+[ -n "$1" ] && tarfile="$1_keys.tgz"
+# Remove any previous tar file.
+[ -e "$tarfile" ] && rm $tarfile
+
+# Create the tar file, if there were esl keys founds.
+if ls -l *.esl >/dev/null 2>&1 ; then
+	tar -czf $tarfile *.esl
+	echo
+	echo "$tarfile files:"
+	tar -tzvf $tarfile
+	echo
+fi
+
+echo
+echo "*****************************************************************************"
+echo "** Note: Backing up secure boot keys does not necessarily allow the keys   **"
+echo "** to be restored. To restore the system to its original secure boot state **"
+echo "** requires support from the system BIOS.                                  **"
+echo "*****************************************************************************"
+echo 
+echo "You may want to enter the following to reboot into the firmware setup utility "
+echo "to clear the platform keys.  Note: This is not supported on all platforms."
+echo
+echo "systemctl reboot --firmware-setup"
+echo
+echo "Done!"
+

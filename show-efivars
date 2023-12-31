@@ -1,0 +1,53 @@
+#!/bin/sh
+
+set -e
+
+# Script to show EFI Signature List (esl) certificates.
+
+if ! command openssl >/dev/null 2>&1 ; then
+	echo "Error: openssl not available!"
+	exit 1
+fi
+
+show_esl() {
+
+	file_base="$1"
+	[ -n "$2" ] && file_base="$2_$1"
+
+	if [ ! -e $file_base.esl ]; then
+		echo "File $file_base.esl not found."
+		return 0
+	fi
+
+	# Extract the der encoded certificates from the EFI Signature List (esl) file.
+	[ "${1}" != "dbx" ] && sig-list-to-certs ${file_base}.esl ${file_base}
+	[ "${1}" == "dbx" ] && sig-list-to-certs ${file_base}.esl ${file_base} >/dev/null 2>&1
+
+	[ -e ${file_base}.txt ] && rm ${file_base}.txt
+	if ! ls ${file_base}*.der >/dev/null 2>&1 ; then
+		echo "No certificates to display for variable ${1}."
+	else
+		for f in $(ls ${file_base}*.der) ; do
+			echo
+			echo "Displaying Certificate: $f"
+			echo
+			out="$(echo $f | sed 's/\.[^.]*$//').txt"
+			echo "text filename is $out"
+			openssl x509 -in $f -inform der -noout -text | tee $out
+			#rm $f
+		done
+	fi
+	# Delete hashes if there are any.  There will be for the dbx variable.
+	ls ${file_base}*.hash >/dev/null 2>&1 && rm ${file_base}*.hash || :
+}
+
+if [ -n "$1" ]; then
+	show_esl $1
+else
+	for v in PK KEK db dbx MokList ; do
+		show_esl $v $1
+	done
+fi
+
+echo "Done!"
+
