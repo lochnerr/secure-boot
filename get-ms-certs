@@ -29,7 +29,7 @@ sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
 # Combine the two ESL keys into one.
 
 cat $ms/{MicCorKEKCA2011_2011-06-24,microsoft_corporation_kek_2k_ca_2023}.esl \
-    > ms_KEK.esl
+    > $ms/ms_KEK.esl
 
 # Get the Microsoft Windows Production PCA 2011 certificate.
 
@@ -62,7 +62,7 @@ sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
 # Combine the ESL keys into one.
 
 cat $ms/{MicWinProPCA2011_2011-10-19,MicCorUEFCA2011_2011-06-27,windows_uefi_ca_2023}.esl \
-    > ms_db.esl
+    > $ms/ms_db.esl
 
 # Get the Microsoft Forbidden Signature Database (dbx).
 
