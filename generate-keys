@@ -81,6 +81,9 @@ create_esl_and_auth_files PK  $1
 create_esl_and_auth_files KEK $1
 create_esl_and_auth_files db  $1
 
+# Create 'empty' noPK.auth file for programmatically moving the system out of User Mode.  See man efi-updatevar.
+sign-efi-sig-list -g "$(< GUID.txt)" -c PK.crt -k PK.key PK /dev/null noPK.auth
+
 # Notify the user if this system supports enrolling UEFI keys.
 if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" = "1" ]; then
 	echo "Info: This system supports enrolling UEFI keys."
