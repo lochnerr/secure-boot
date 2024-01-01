@@ -64,10 +64,6 @@ sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
 cat $ms/{MicWinProPCA2011_2011-10-19,MicCorUEFCA2011_2011-06-27,windows_uefi_ca_2023}.esl \
     > $ms/ms_db.esl
 
-# Get the Microsoft Forbidden Signature Database (dbx).
-
-curl -L https://uefi.org/sites/default/files/resources/x64_DBXUpdate.bin -o $ms/x64_DBXUpdate.bin
-
 echo "Done!"
 
 exit 0

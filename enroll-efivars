@@ -64,8 +64,8 @@ if [ $install == "true" ]; then
 	# Note that the keys must be added in reverse order of significance.
 	[ "$got_ms" == "true" ] &&
 	sudo efi-updatevar -e -f $ms/x64_DBXUpdate.bin	dbx
-	sudo efi-updatevar -e -f combined_db.auth	db
-	sudo efi-updatevar -e -f combined_KEK.auth	KEK
+	sudo efi-updatevar -e -f combined_db.esl	db
+	sudo efi-updatevar -e -f combined_KEK.esl	KEK
 	sudo efi-updatevar    -f PK.auth		PK
 else
 	# Create BLOB for AWS.
