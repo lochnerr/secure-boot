@@ -5,6 +5,7 @@ set -e
 # get-ms-certs: Script to get Microsoft UEFI secure boot certificates.
 
 ms="ms"
+[ -d certs ] && ms="certs/ms"
 mkdir -p $ms
 
 # Get the Microsoft Corporation KEK CA 2011 certificate.

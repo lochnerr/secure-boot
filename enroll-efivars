@@ -45,7 +45,7 @@ if [ ! -e $ms/ms_db.esl ]; then
 	cat db.esl			> combined_db.esl
 else
 	got_ms="true"
-	cat $ms/ms_db.esl dc.esl	> combined_db.esl
+	cat $ms/ms_db.esl db.esl	> combined_db.esl
 fi
 
 if [ "$got_ms" == "true" ]; then
@@ -69,9 +69,13 @@ if [ $install == "true" ]; then
 	sudo efi-updatevar    -f PK.auth		PK
 else
 	# Create BLOB for AWS.
+	if ! command -v uefivars.py >/dev/null 2>&1 ; then
+		echo "Error: uefivars.py not found!"
+		exit 1
+	fi
 	dbx_option=
 	[ "$got_ms" == "true" ] && dbx_option="--dbx $ms/x64_DBXUpdate.bin"
-	~/git/python-uefivars/uefivars.py -i none -o aws -O custom_blob.bin \
+	uefivars.py -i none -o aws -O custom_blob.bin \
 		$dbx_option \
 		--db  combined_db.esl \
 		--KEK combined_KEK.esl \
