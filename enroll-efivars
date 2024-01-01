@@ -61,7 +61,7 @@ if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' '
 fi
 
 if [ $install == "true" ]; then
-	# Note that the keys must be added in reverse order of significance.
+	# Note: efi variables must be added in reverse order of significance.
 	[ "$got_ms" == "true" ] &&
 	sudo efi-updatevar    -f $ms/x64_DBXUpdate.bin  dbx
 	sudo efi-updatevar -e -f combined_db.esl	db
@@ -81,13 +81,24 @@ else
 		--KEK combined_KEK.esl \
 		--PK  PK.auth
 
-	SNAPSHOT="snap-0f1cd666fccf702b9"
+	Fedora_AMI="ami-0746fc234df9c1ee0"
+	Published="2023-11-01T03:00:57.000Z"
+	SNAPSHOT="snap-05f4f2c60303d6f2b"
+
 	cat <<-__EOD__
 
-Register with something like:
+To create an AWS EC2 fedora AMI:
+
+Go to AMIs.  Select Public, enter the fedora AMI id, then press enter.
+Click on the AMI, then click the snapshot at the bottom.
+Select Actions/Copy snapshot.
+Modify the description, e.g. 'Fedora-Cloud-Base-39-1.5.x86_64-hvm-us-east-1-gp3-0'
+Set the name, e.g. 'Fedora 39 1.5'
+
+Then register it with something like:
 
 aws ec2 register-image\
- --name 'Fedora 39 UEFI/TPM2 w/BLOB'\
+ --name 'Fedora 39 UEFI/TPM2'\
  --boot-mode uefi\
  --architecture x86_64\
  --root-device-name /dev/sda1\
