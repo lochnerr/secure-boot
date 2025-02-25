@@ -8,7 +8,7 @@ set -e
 if [ -x ./cert-to-efi-sig-list ]; then
 	echo "The cert-to-efi-sig-list executable file already exists."
 	echo "To get a newer version delete the file and rerun."
-	exit 1
+	exit 0
 fi
 
 podman pull debian:latest
