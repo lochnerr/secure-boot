@@ -1,5 +1,6 @@
 misc/
 certs/
+certs_bak
 ms/
 cert-to-efi-sig-list
 
