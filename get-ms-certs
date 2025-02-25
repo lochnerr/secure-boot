@@ -8,60 +8,92 @@ ms="ms"
 [ -d certs ] && ms="certs/ms"
 mkdir -p $ms
 
+get_file() {
+
+	tmpfile="$(mktemp)"
+	if ! curl --fail -L $2 -o $tmpfile >/dev/null 2>&1 ; then
+		echo "Error: Unable to retrieve link: $2"
+		rm -f $tmpfile
+		exit 1
+	fi
+
+	if diff -s $tmpfile $4 >/dev/null 2>&1 ; then
+		echo "Info: File $4 is unchanged."
+		rm -f $tmpfile
+	else
+		echo "Info: Updating file $4."
+		changed="true"
+		mv -f $tmpfile $4
+	fi
+}
+
+sbsiglist_if_changed() {
+
+	if [ "$changed" == "true" ]; then
+		echo sbsiglist --type x509 --owner "$4" $5 --output $7
+	fi
+}
+
 # Get the Microsoft Corporation KEK CA 2011 certificate.
 
-curl -L https://go.microsoft.com/fwlink/p/?linkid=321185 -o $ms/MicCorKEKCA2011_2011-06-24.crt
+changed=
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=321185 -o $ms/MicCorKEKCA2011_2011-06-24.crt
 
 # Get the Microsoft Corporation KEK 2K CA 2023 certificate.
 
-curl -L https://go.microsoft.com/fwlink/p/?linkid=2239775 -o $ms/microsoft_corporation_kek_2k_ca_2023.crt
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=2239775 -o $ms/microsoft_corporation_kek_2k_ca_2023.crt
 
 # Generate EFI Signature List (ESL) files from the Microsoft certificates
 # using the Microsoft GUID 77fa9abd-0359-4d32-bd60-28f4e78f784b.
 
-sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
+sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
     $ms/MicCorKEKCA2011_2011-06-24.crt \
     --output $ms/MicCorKEKCA2011_2011-06-24.esl
 
-sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
+sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
     $ms/microsoft_corporation_kek_2k_ca_2023.crt \
     --output $ms/microsoft_corporation_kek_2k_ca_2023.esl
 
 # Combine the two ESL keys into one.
 
+[ ! -e $ms/ms_KEK.esl ] && changed="true"
+[ "$changed" == "true" ] &&
 cat $ms/{MicCorKEKCA2011_2011-06-24,microsoft_corporation_kek_2k_ca_2023}.esl \
     > $ms/ms_KEK.esl
 
 # Get the Microsoft Windows Production PCA 2011 certificate.
 
-curl -L https://go.microsoft.com/fwlink/p/?linkid=321192 -o $ms/MicWinProPCA2011_2011-10-19.crt
+changed=
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=321192 -o $ms/MicWinProPCA2011_2011-10-19.crt
 
 # Download the Microsoft Windows UEFI CA 2011 certificate for third-party vendors.
 # This is needed by Fedora and, others, presumably.
 
-curl -L https://go.microsoft.com/fwlink/p/?linkid=321194 -o $ms/MicCorUEFCA2011_2011-06-27.crt
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=321194 -o $ms/MicCorUEFCA2011_2011-06-27.crt
 
 # Download the Microsoft Windows UEFI CA 2023 certificate for third-party vendors.
 
-curl -L https://go.microsoft.com/fwlink/?linkid=2239776 -o $ms/windows_uefi_ca_2023.crt
+get_file -L https://go.microsoft.com/fwlink/?linkid=2239776 -o $ms/windows_uefi_ca_2023.crt
 
 # Using the Microsoft GUID 77fa9abd-0359-4d32-bd60-28f4e78f784b, generate EFI Signature List
 # (ESL) files from Microsoft certificates.
 
-sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
+sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
     $ms/MicWinProPCA2011_2011-10-19.crt \
     --output $ms/MicWinProPCA2011_2011-10-19.esl
 
-sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
+sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
     $ms/MicCorUEFCA2011_2011-06-27.crt \
     --output $ms/MicCorUEFCA2011_2011-06-27.esl
 
-sbsiglist --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
+sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
     $ms/windows_uefi_ca_2023.crt \
     --output $ms/windows_uefi_ca_2023.esl
 
 # Combine the ESL keys into one.
 
+[ ! -e $ms/ms_db.esl ] && changed="true"
+[ "$changed" == "true" ] &&
 cat $ms/{MicWinProPCA2011_2011-10-19,MicCorUEFCA2011_2011-06-27,windows_uefi_ca_2023}.esl \
     > $ms/ms_db.esl
 
