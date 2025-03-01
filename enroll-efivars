@@ -4,23 +4,17 @@ set -e
 
 # enroll-efivars - Script to enroll UEFI secure boot certificate lists.
 
-ms="ms"
-
-if [ ! -d certs/ ]; then
-	echo "Error: No certs directory found."
+if [ "$(id -u )" != "0" ]; then
+	echo "Must be root!"
 	exit 1
 fi
-cd certs
 
-# Abort if a platform key does not exist.
-if [ ! -e PK.key ]; then
-	echo "Error: PK.key not found, aborting!"
-	echo "Have you run generate-keys?"
-	exit 1
-fi
+# If running as container, get into the out directory (which should be mounted on the current working directory."
+ls -l /run/.containerenv >/dev/null 2>&1 && [ -d /out ] && cd /out
+[ -d certs ] && cd certs
 
 rc="0"
-for f in PK.auth KEK.esl db.esl ; do
+for f in combined_db.esl combined_KEK.esl PK.auth ; do
 	if [ ! -e $f ]; then
 		echo "Error: File $f not found."
 		rc="1"
@@ -31,85 +25,19 @@ if [ "$rc" != "0" ]; then
 	exit $rc
 fi
 
-# If there is no Microsoft KEK, just use the local one, otherwise append the local one to the Microsoft KEK.
-got_ms="false"
-if [ ! -e $ms/ms_KEK.esl ]; then
-	cat KEK.esl			> combined_KEK.esl
-else
-	got_ms="true"
-	cat $ms/ms_KEK.esl KEK.esl	> combined_KEK.esl
-fi
-
-# If there is no Microsoft KEK, just use the newly created one, otherwise append the Microsoft KEK to the new one.
-if [ ! -e $ms/ms_db.esl ]; then
-	cat db.esl			> combined_db.esl
-else
-	got_ms="true"
-	cat $ms/ms_db.esl db.esl	> combined_db.esl
-fi
-
-if [ "$got_ms" == "true" ]; then
-	# Always get the latest UEFI Revocation List File, if Microsoft files are available.
-	curl -L https://uefi.org/sites/default/files/resources/x64_DBXUpdate.bin -o $ms/x64_DBXUpdate.bin
-fi
-
-# If this system supports installing UEFI keys, do it.  Otherwise, create an aws blob.
-install="true"
-if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" != "1" ]; then
-	echo "Info: This system does not support installing UEFI keys."
-	install="false"
-fi
-
-if [ $install == "true" ]; then
+# Enroll the UEFI variables, if supported.
+if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode 2>/dev/null | cut -d ' ' -f 1)" = "1" ]; then
 	# Note: efi variables must be added in reverse order of significance.
-	[ "$got_ms" == "true" ] &&
-	sudo efi-updatevar    -f $ms/x64_DBXUpdate.bin  dbx
+	[ -e ms/x64_DBXUpdate.bin ] &&
+	sudo efi-updatevar    -f ms/x64_DBXUpdate.bin  dbx
 	sudo efi-updatevar -e -f combined_db.esl	db
 	sudo efi-updatevar -e -f combined_KEK.esl	KEK
 	sudo efi-updatevar    -f PK.auth		PK
 else
-	# Create BLOB for AWS.
-	if ! command -v uefivars.py >/dev/null 2>&1 ; then
-		echo "Error: uefivars.py not found!"
-		exit 1
+	echo "Info: This system does not support enrolling UEFI keys."
+	if ls -l /run/.containerenv >/dev/null 2>&1 ; then
+		echo "This normally cannot be run inside a cointainer."
 	fi
-	dbx_option=
-	[ "$got_ms" == "true" ] && dbx_option="--dbx $ms/x64_DBXUpdate.bin"
-	uefivars.py -i none -o aws -O custom_blob.bin \
-		$dbx_option \
-		--db  combined_db.esl \
-		--KEK combined_KEK.esl \
-		--PK  PK.auth
-
-	Fedora_AMI="ami-0746fc234df9c1ee0"
-	Published="2023-11-01T03:00:57.000Z"
-	SNAPSHOT="snap-05f4f2c60303d6f2b"
-
-	cat <<-__EOD__
-
-To create an AWS EC2 fedora AMI:
-
-Go to AMIs.  Select Public, enter the fedora AMI id, then press enter.
-Click on the AMI, then click the snapshot at the bottom.
-Select Actions/Copy snapshot.
-Modify the description, e.g. 'Fedora-Cloud-Base-39-1.5.x86_64-hvm-us-east-1-gp3-0'
-Set the name, e.g. 'Fedora 39 1.5'
-
-Then register it with something like:
-
-aws ec2 register-image\
- --name 'Fedora 39 UEFI/TPM2'\
- --boot-mode uefi\
- --architecture x86_64\
- --root-device-name /dev/sda1\
- --block-device-mappings "DeviceName=/dev/sda1,Ebs={SnapshotId=$SNAPSHOT,DeleteOnTermination=true}"\
- --virtualization-type hvm\
- --ena-support\
- --tpm-support v2.0\
- --uefi-data '$(cat custom_blob.bin)'
-
-	__EOD__
-
 fi
 
 echo "Done!"
