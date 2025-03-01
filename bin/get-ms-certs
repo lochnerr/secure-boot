@@ -4,9 +4,10 @@ set -e
 
 # get-ms-certs: Script to get Microsoft UEFI secure boot certificates.
 
-ms="ms"
-[ -d certs ] && ms="certs/ms"
-mkdir -p $ms
+# If running as container, get into the out directory (which should be mounted on the current working directory."
+ls -l /run/.containerenv >/dev/null 2>&1 && [ -d /out ] && cd /out
+[ -d certs ] && cd certs
+mkdir -p ms
 
 get_file() {
 
@@ -35,74 +36,77 @@ sbsiglist_if_changed() {
 	fi
 }
 
-# Get the Microsoft Corporation KEK CA 2011 certificate.
-
 # Copy default files, then update if changed.
-if [ $(($(ls -l $ms | wc -l))) -lt 2 ]; then
+if ! ls -l ms/*.der >/dev/null 2>&1 ; then
 	echo "Copying default certificates."
-	cp --preserve=timestamps /root/ms/* $ms/.
+	cp --preserve=timestamps /root/ms/* ms/.
 fi
 
+# Always get the latest UEFI Revocation List File, if Microsoft files are available.
+get_file -L https://uefi.org/sites/default/files/resources/x64_DBXUpdate.bin -o ms/x64_DBXUpdate.bin
+
+# Get the Microsoft Corporation KEK CA 2011 certificate.
+
 changed=
-get_file -L https://go.microsoft.com/fwlink/p/?linkid=321185 -o $ms/MicCorKEKCA2011_2011-06-24.der
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=321185 -o ms/MicCorKEKCA2011_2011-06-24.der
 
 # Get the Microsoft Corporation KEK 2K CA 2023 certificate.
 
-get_file -L https://go.microsoft.com/fwlink/p/?linkid=2239775 -o $ms/microsoft_corporation_kek_2k_ca_2023.der
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=2239775 -o ms/microsoft_corporation_kek_2k_ca_2023.der
 
 # Generate EFI Signature List (ESL) files from the Microsoft certificates
 # using the Microsoft GUID 77fa9abd-0359-4d32-bd60-28f4e78f784b.
 
 sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
-    $ms/MicCorKEKCA2011_2011-06-24.der \
-    --output $ms/MicCorKEKCA2011_2011-06-24.esl
+    ms/MicCorKEKCA2011_2011-06-24.der \
+    --output ms/MicCorKEKCA2011_2011-06-24.esl
 
 sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
-    $ms/microsoft_corporation_kek_2k_ca_2023.der \
-    --output $ms/microsoft_corporation_kek_2k_ca_2023.esl
+    ms/microsoft_corporation_kek_2k_ca_2023.der \
+    --output ms/microsoft_corporation_kek_2k_ca_2023.esl
 
 # Combine the two ESL keys into one.
 
-[ ! -e $ms/ms_KEK.esl ] && changed="true"
+[ ! -e ms/ms_KEK.esl ] && changed="true"
 [ "$changed" = "true" ] &&
-cat $ms/{MicCorKEKCA2011_2011-06-24,microsoft_corporation_kek_2k_ca_2023}.esl \
-    > $ms/ms_KEK.esl
+cat ms/{MicCorKEKCA2011_2011-06-24,microsoft_corporation_kek_2k_ca_2023}.esl \
+    > ms/ms_KEK.esl
 
 # Get the Microsoft Windows Production PCA 2011 certificate.
 
 changed=
-get_file -L https://go.microsoft.com/fwlink/p/?linkid=321192 -o $ms/MicWinProPCA2011_2011-10-19.der
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=321192 -o ms/MicWinProPCA2011_2011-10-19.der
 
 # Download the Microsoft Windows UEFI CA 2011 certificate for third-party vendors.
 # This is needed by Fedora and, others, presumably.
 
-get_file -L https://go.microsoft.com/fwlink/p/?linkid=321194 -o $ms/MicCorUEFCA2011_2011-06-27.der
+get_file -L https://go.microsoft.com/fwlink/p/?linkid=321194 -o ms/MicCorUEFCA2011_2011-06-27.der
 
 # Download the Microsoft Windows UEFI CA 2023 certificate for third-party vendors.
 
-get_file -L https://go.microsoft.com/fwlink/?linkid=2239776 -o $ms/windows_uefi_ca_2023.der
+get_file -L https://go.microsoft.com/fwlink/?linkid=2239776 -o ms/windows_uefi_ca_2023.der
 
 # Using the Microsoft GUID 77fa9abd-0359-4d32-bd60-28f4e78f784b, generate EFI Signature List
 # (ESL) files from Microsoft certificates.
 
 sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
-    $ms/MicWinProPCA2011_2011-10-19.der \
-    --output $ms/MicWinProPCA2011_2011-10-19.esl
+    ms/MicWinProPCA2011_2011-10-19.der \
+    --output ms/MicWinProPCA2011_2011-10-19.esl
 
 sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
-    $ms/MicCorUEFCA2011_2011-06-27.der \
-    --output $ms/MicCorUEFCA2011_2011-06-27.esl
+    ms/MicCorUEFCA2011_2011-06-27.der \
+    --output ms/MicCorUEFCA2011_2011-06-27.esl
 
 sbsiglist_if_changed --type x509 --owner "77fa9abd-0359-4d32-bd60-28f4e78f784b" \
-    $ms/windows_uefi_ca_2023.der \
-    --output $ms/windows_uefi_ca_2023.esl
+    ms/windows_uefi_ca_2023.der \
+    --output ms/windows_uefi_ca_2023.esl
 
 # Combine the ESL keys into one.
 
-[ ! -e $ms/ms_db.esl ] && changed="true"
+[ ! -e ms/ms_db.esl ] && changed="true"
 [ "$changed" = "true" ] &&
-cat $ms/{MicWinProPCA2011_2011-10-19,MicCorUEFCA2011_2011-06-27,windows_uefi_ca_2023}.esl \
-    > $ms/ms_db.esl
+cat ms/{MicWinProPCA2011_2011-10-19,MicCorUEFCA2011_2011-06-27,windows_uefi_ca_2023}.esl \
+    > ms/ms_db.esl
 
 echo "Done!"
 
