@@ -1,14 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 
 set -e
 
 # generate-keys - Script to create UEFI secure boot keys.
-
-# Abort if a platform key exists.
-if [ -e certs/PK.key ]; then
-	echo "Error: PK.key already exists, aborting!"
-	exit 1
-fi
 
 # Check for required tools.
 required() {
@@ -18,20 +12,26 @@ required() {
 	fi
 }
 req="true"
-for i in openssl cert-to-efi-sig-list cert-to-efi-sig-list efivar ; do required $i ; done
+for i in openssl cert-to-efi-sig-list sign-efi-sig-list efivar uuidgen; do required $i ; done
 # Additional from: https://sysguides.com/fedora-uefi-secure-boot-with-custom-keys/
 [ "$req" != "true" ] && exit 1
 
-# Make a directory for the keys and certificates
-mkdir -p certs
-cd certs
+# If running as container, get into the out directory (which should be mounted on the current working directory."
+ls -l /run/.containerenv >/dev/null 2>&1 && [ -d /out ] && cd /out
+[ -d certs ] && cd certs
 
 # Create a globally unique identifier (GUID) to be used in signature lists.
-uuidgen --random > GUID.txt
-echo "GUID is $(cat GUID.txt)."
+if [ -e GUID.txt ]; then
+	echo "Info: Keeping existing GUID file."
+else
+	uuidgen --random > GUID.txt
+fi
+echo "Info: GUID is $(cat GUID.txt)."
 
 # Create a default config for key/cert generation using openssl.
-cat >PK.cfg <<-__EOD__
+if [ ! -e PK.cfg ]; then
+	echo "Info: Creating default PK.cfg file."
+	cat >PK.cfg <<-__EOD__
 	[ req ]
 	default_bits         = 4096
 	encrypt_key          = no
@@ -51,21 +51,50 @@ cat >PK.cfg <<-__EOD__
 	basicConstraints     = critical,CA:FALSE
 	subjectKeyIdentifier = hash
 	__EOD__
+fi
 
 generate_key() {
 
-	[ "$1" != "PK" ] && cp -v {PK,$1}.cfg
-	sed -i "s/Platform Key/$2/g" $1.cfg
+	if [[ -e $1.crt ]] && [[ -e $1.key ]]; then
+		echo "Info: Keeping existing $1 credentials."
+		return
+	fi
+
+	if [ "$1" != "PK" ]; then
+		if [ -e $1.cfg ]; then
+			echo "Info: Keeping existing $1.cfg"
+		else
+			echo "Info: Creating default $1.cfg from PK.cfg."
+			cp PK.cfg $1.cfg
+			sed -i "s/Platform Key/$2/g" $1.cfg
+		fi
+	else
+		# PK is being generated so we must resign all other keys.
+		PK_CHANGED="true"
+	fi
+
+	echo "Info: Creating $1.key and $1.crt"
 	openssl req -x509 -sha256 -days 5490 -outform PEM -config $1.cfg \
 		-keyout $1.key -out $1.crt
+
+	# If a new subordinate key is generated, delete the esl file to force recreating it.
+	if [ "$1" != "PK" ]; then
+		rm -f $1.esl
+	fi
 }
 
 create_esl_and_auth_files() {
+
+	if [[ -e $1.esl ]] && [[ "$PK_CHANGED" != "true" ]]; then
+		echo "Info: Keeping existing $1.esl"
+		return
+	fi
 
 	# Create an ESL file from a certificate.
 	cert-to-efi-sig-list -g "$(< GUID.txt)" $1.crt $1.esl
 
 	# Now, sign the esl file using the public and private platform keys (PK.crt and PK.key).
+	echo "Info: Signing $1.esl file."
 	sign-efi-sig-list -g "$(< GUID.txt)" \
 		-t "$(date +'%F %T')" \
 		-c PK.crt -k PK.key \
@@ -82,14 +111,42 @@ create_esl_and_auth_files KEK $1
 create_esl_and_auth_files db  $1
 
 # Create 'empty' noPK.auth file for programmatically moving the system out of User Mode.  See man efi-updatevar.
-sign-efi-sig-list -g "$(< GUID.txt)" -c PK.crt -k PK.key PK /dev/null noPK.auth
+if [[ -e noPK.auth ]] && [[ "$PK_CHANGED" != "true" ]]; then
+	echo "Info: Keeping existing noPK.auth file."
+else
+	echo "Info: Creating 'empty' noPK.auth file."
+	sign-efi-sig-list -g "$(< GUID.txt)" -c PK.crt -k PK.key PK /dev/null noPK.auth
+fi
+
+combine_files() {
+
+	tmpfile="$(mktemp)"
+
+	# If there is no Microsoft esl file, just use the newly created one, otherwise append the local one to the Microsoft one.
+	if [ ! -e $1 ]; then
+		cat    $2 >$tmpfile
+	else
+		cat $1 $2 >$tmpfile
+	fi
+
+	if diff -s $tmpfile $3 >/dev/null 2>&1 ; then
+		echo "Info: File $3 is unchanged."
+		rm -f $tmpfile
+	else
+		echo "Info: Updating or creating file $3."
+		mv -f $tmpfile $3
+	fi
+}
+
+combine_files ms/ms_KEK.esl KEK.esl combined_KEK.esl
+combine_files ms/ms_db.esl  db.esl  combined_db.esl
 
 # Notify the user if this system supports enrolling UEFI keys.
-if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode | cut -d ' ' -f 1)" = "1" ]; then
+if [ "$(efivar -d -n 8be4df61-93ca-11d2-aa0d-00e098032b8c-SetupMode 2>/dev/null | cut -d ' ' -f 1)" = "1" ]; then
 	echo "Info: This system supports enrolling UEFI keys."
 	echo "Info: To enroll your new UEFI keys, run: enroll-keys"
 else
-	echo "Warning: This system does not support enrolling UEFI keys."
+	echo "Info: This system does not support enrolling UEFI keys."
 fi
 
 echo "Done!"
