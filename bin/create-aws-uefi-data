@@ -1,0 +1,84 @@
+#!/bin/sh
+
+set -e
+
+# create-aws-uefi-data - Script to create a blob containing UEFI platform keys and signature lists that can be attached to an AWS machine image.
+
+# If running as container, get into the out directory (which should be mounted on the current working directory."
+ls -l /run/.containerenv >/dev/null 2>&1 && [ -d /out ] && cd /out
+[ -d certs ] && cd certs
+
+rc="0"
+for f in combined_db.esl combined_KEK.esl PK.auth ; do
+	if [ ! -e $f ]; then
+		echo "Error: File $f not found."
+		rc="1"
+	fi
+done
+if [ "$rc" != "0" ]; then
+	echo "Error: Required files not found, aborting!"
+	echo "Have you run generate-keys?"
+	exit $rc
+fi
+
+# Create BLOB for AWS.
+
+[ -e ~/py_envs/bin/activate ] && . ~/py_envs/bin/activate
+if ! command -v uefivars >/dev/null 2>&1 ; then
+	echo "Error: uefivars.py not found!"
+	exit 1
+fi
+
+dbx_option=
+[ -e ms/x64_DBXUpdate.bin ] && dbx_option="--dbx ms/x64_DBXUpdate.bin"
+
+tmpfile="$(mktemp)"
+
+uefivars -i none -o aws -O $tmpfile \
+	$dbx_option \
+	--db  combined_db.esl \
+	--KEK combined_KEK.esl \
+	--PK  PK.auth
+
+if diff -s $tmpfile aws_uefi_data.bin >/dev/null 2>&1 ; then
+	echo "Info: File aws_uefi_data.bin is unchanged."
+	rm -f $tmpfile
+else
+	echo "Info: Updating or creating file aws_uefi_data.bin."
+	mv -f $tmpfile aws_uefi_data.bin
+fi
+
+Fedora_AMI="ami-0746fc234df9c1ee0"
+Published="2023-11-01T03:00:57.000Z"
+SNAPSHOT="snap-05f4f2c60303d6f2b"
+
+cat <<__EOD__
+
+To create an AWS EC2 fedora AMI:
+
+Go to AMIs.  Select Public, enter the fedora AMI id, then press enter.
+Click on the AMI, then click the snapshot at the bottom.
+Select Actions/Copy snapshot.
+Modify the description, e.g. 'Fedora-Cloud-Base-39-1.5.x86_64-hvm-us-east-1-gp3-0'
+Set the name, e.g. 'Fedora 39 1.5'
+
+Then register it with something like:
+
+__EOD__
+
+echo "aws ec2 register-image \\"
+echo " --name 'Fedora 39 UEFI/TPM2' \\"
+echo " --boot-mode uefi \\"
+echo " --architecture x86_64 \\"
+echo " --root-device-name /dev/sda1 \\"
+echo " --block-device-mappings "DeviceName=/dev/sda1,Ebs={SnapshotId=$SNAPSHOT,DeleteOnTermination=true}" \\"
+echo " --virtualization-type hvm \\"
+echo " --ena-support \\"
+echo " --tpm-support v2.0 \\"
+echo " --uefi-data '\$(cat aws_uefi_data.bin)'"
+
+echo
+echo "Done!"
+
+exit 0
+
