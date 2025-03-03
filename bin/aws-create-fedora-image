@@ -1,0 +1,190 @@
+#!/bin/sh
+
+# aws-create-fedora-image: Create a Fedora AWS machine image (AMI) that supports secure boot and TPM2.
+
+set -e
+
+REL="41"
+VER="1.4"
+URL_BASE="https://download.fedoraproject.org/pub/fedora/linux/releases/${REL}/Cloud/x86_64/images"
+NAME="Fedora-Cloud-Base-AmazonEC2-${REL}-${VER}.x86_64.raw"
+SUMS="Fedora-Cloud-${REL}-${VER}-x86_64-CHECKSUM"
+
+get_file() {
+
+	url="$1"
+	file="$2"
+	echo "Info: Downloading '${file}'."
+	curl --fail -L ${url} -o ${file} >/dev/null 2>&1
+}
+
+get_image() {
+
+	[ ! -e ${SUMS} ]    && get_file ${URL_BASE}/${SUMS}    ${SUMS}
+	[ ! -e ${NAME}.xz ] && get_file ${URL_BASE}/${NAME}.xz ${NAME}.xz
+
+	echo "Info: Verifying checksums."
+	sha256sum --ignore-missing -c ${SUMS}
+
+	echo "Decompressing file '${NAME}.xz'."
+	xz -dk ${NAME}.xz
+}
+
+# Start.
+
+if ! command -v aws >/dev/null 2>&1 ; then
+	echo "Error: Command aws is not available."
+	exit 1
+fi
+
+if [ -e "${NAME}" ]; then
+	echo "Info: Using existing ${NAME} image."
+else
+	get_image
+fi
+
+if aws s3 ls s3://clone-vm-images/${NAME} 2>/dev/null | grep ${NAME} >/dev/null 2>&1 ; then
+	echo "Info: Using the previously uploaded image '${NAME}'."
+else
+	echo "Info: Uploading ${NAME} to s3."
+	aws s3 cp ${NAME} s3://clone-vm-images/	
+fi
+
+cat >temp.json <<__EOD__
+{
+    "Description": "Fedora ${REL} EC2 Snapshot",
+    "Format": "raw",
+    "UserBucket": {
+        "S3Bucket": "clone-vm-images",
+        "S3Key": "${NAME}"
+    }
+}
+__EOD__
+
+# Start the snapshot task and get it's id.
+echo "Info: Starting Import Snapshot."
+aws ec2 import-snapshot \
+    --disk-container "file://temp.json" \
+    | tee /tmp/results
+IMPORT_TASKID="$(cat /tmp/results | jq -r '.ImportTaskId')"
+echo "Info: Import Snapshot Task ID is: ${IMPORT_TASKID}"
+
+rm temp.json
+
+echo "Info: $(date +%T) Snapshot Started."
+# Wait for it to finish.
+while true ; do
+	sleep 3s
+	aws ec2 describe-import-snapshot-tasks \
+	    --import-task-ids "${IMPORT_TASKID}" \
+	    > /tmp/results
+	STATUS="$(cat /tmp/results | jq -r '.ImportSnapshotTasks[0].SnapshotTaskDetail.Status')"
+	if [ "$STATUS" != "active" ]; then
+		cat /tmp/results
+		echo "Info: $(date +%T) Snapshot Completed."
+		break
+	fi
+done
+
+SNAPSHOT_ID="$(cat /tmp/results | jq -r '.ImportSnapshotTasks[0].SnapshotTaskDetail.SnapshotId')"
+echo "Snapshot Id is: ${SNAPSHOT_ID}."
+aws ec2 register-image \
+    --name "Fedora ${REL} Secure Boot" \
+    --block-device-mappings "DeviceName=/dev/sda1,Ebs={SnapshotId=${SNAPSHOT_ID},DeleteOnTermination=true}" \
+    --architecture x86_64 \
+    --root-device-name /dev/sda1 \
+    --virtualization-type hvm \
+    --ena-support \
+    --boot-mode uefi \
+    --tpm-support v2.0 \
+    --uefi-data "$(cat certs/aws_uefi_data.bin)" \
+    > /tmp/results
+
+AMI_NEW="$(cat /tmp/results | jq -r '.ImageId')"
+echo "New AMI Id is: ${AMI_NEW}."
+aws ec2 wait image-available --image-ids "${AMI_NEW}"
+
+echo "Info: Removing ${NAME} from s3."
+aws s3 rm s3://clone-vm-images/${NAME} || :
+
+echo "Done!"
+
+exit 0
+
+# The preliminaries that were required.
+
+cat >trust-policy.json <<-__EOD__
+{	
+   "Version": "2012-10-17",
+   "Statement": [
+      {
+         "Effect": "Allow",
+         "Principal": { "Service": "vmie.amazonaws.com" },
+         "Action": "sts:AssumeRole",
+         "Condition": {
+            "StringEquals":{
+               "sts:Externalid": "vmimport"
+            }
+         }
+      }
+   ]
+}
+__EOD__
+
+aws iam create-role --role-name vmimport --assume-role-policy-document "file://trust-policy.json"
+
+cat >role-policy.json <<__EOD__
+{
+   "Version":"2012-10-17",
+   "Statement":[
+      {
+         "Effect": "Allow",
+         "Action": [
+            "s3:GetBucketLocation",
+            "s3:GetObject",
+            "s3:ListBucket",
+            "s3:PutObject",
+            "s3:GetBucketAcl"
+         ],
+         "Resource": [
+            "arn:aws:s3:::clone-vm-images",
+            "arn:aws:s3:::clone-vm-images/*"
+         ]
+      },
+      {
+         "Effect": "Allow",
+         "Action": [
+            "ec2:ModifySnapshotAttribute",
+            "ec2:CopySnapshot",
+            "ec2:RegisterImage",
+            "ec2:Describe*"
+         ],
+         "Resource": "*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": [
+           "kms:CreateGrant",
+           "kms:Decrypt",
+           "kms:DescribeKey",
+           "kms:Encrypt",
+           "kms:GenerateDataKey*",
+           "kms:ReEncrypt*"
+        ],
+        "Resource": "*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": [
+          "license-manager:GetLicenseConfiguration",
+          "license-manager:UpdateLicenseSpecificationsForResource",
+          "license-manager:ListLicenseSpecificationsForResource"
+        ],
+        "Resource": "*"
+      }
+   ]
+}
+__EOD__
+
+aws iam put-role-policy --role-name vmimport --policy-name vmimport --policy-document "file://role-policy.json"
+

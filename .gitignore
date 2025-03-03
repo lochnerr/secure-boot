@@ -3,3 +3,4 @@ certs/
 certs_bak
 cert-to-efi-sig-list
 secure-boot.log
+Fedora-Cloud*
