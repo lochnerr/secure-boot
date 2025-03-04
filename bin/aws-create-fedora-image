@@ -7,8 +7,16 @@ set -e
 REL="41"
 VER="1.4"
 URL_BASE="https://download.fedoraproject.org/pub/fedora/linux/releases/${REL}/Cloud/x86_64/images"
-NAME="Fedora-Cloud-Base-AmazonEC2-${REL}-${VER}.x86_64.raw"
 SUMS="Fedora-Cloud-${REL}-${VER}-x86_64-CHECKSUM"
+if [ "$1" != "UKI" ]; then
+	DOWNLOAD="Fedora-Cloud-Base-AmazonEC2-${REL}-${VER}.x86_64.raw.xz"
+	NAME="Fedora-Cloud-Base-AmazonEC2-${REL}-${VER}.x86_64.raw"
+	DESC="Fedora ${REL}-${VER} Standard"
+else
+	DOWNLOAD="Fedora-Cloud-Base-UEFI-UKI-${REL}-${VER}.x86_64.qcow2"
+	NAME="Fedora-Cloud-Base-UEFI-UKI-${REL}-${VER}.x86_64.raw"
+	DESC="Fedora ${REL}-${VER} UKI"
+fi
 
 get_file() {
 
@@ -20,20 +28,30 @@ get_file() {
 
 get_image() {
 
-	[ ! -e ${SUMS} ]    && get_file ${URL_BASE}/${SUMS}    ${SUMS}
-	[ ! -e ${NAME}.xz ] && get_file ${URL_BASE}/${NAME}.xz ${NAME}.xz
+	[ ! -e ${SUMS} ]     && get_file ${URL_BASE}/${SUMS}     ${SUMS}
+	[ ! -e ${DOWNLOAD} ] && get_file ${URL_BASE}/${DOWNLOAD} ${DOWNLOAD}
 
 	echo "Info: Verifying checksums."
 	sha256sum --ignore-missing -c ${SUMS}
 
-	echo "Decompressing file '${NAME}.xz'."
-	xz -dk ${NAME}.xz
+	if echo "${DOWNLOAD}" | grep ".xz$" >/dev/null 2>&1 ; then
+		echo "Decompressing file '${DOWNLOAD}'."
+		xz -dk ${DOWNLOAD}
+	else
+		echo "Converting file '${DOWNLOAD}' to RAW format."
+		qemu-img convert -f qcow2 -O raw ${DOWNLOAD} ${NAME}
+	fi
 }
 
 # Start.
 
 if ! command -v aws >/dev/null 2>&1 ; then
 	echo "Error: Command aws is not available."
+	exit 1
+fi
+
+if ! command -v qemu-img >/dev/null 2>&1 ; then
+	echo "Error: Command qemu-img is not available."
 	exit 1
 fi
 
@@ -47,12 +65,12 @@ if aws s3 ls s3://clone-vm-images/${NAME} 2>/dev/null | grep ${NAME} >/dev/null 
 	echo "Info: Using the previously uploaded image '${NAME}'."
 else
 	echo "Info: Uploading ${NAME} to s3."
-	aws s3 cp ${NAME} s3://clone-vm-images/	
+	aws s3 cp ${NAME} s3://clone-vm-images/
 fi
 
 cat >temp.json <<__EOD__
 {
-    "Description": "Fedora ${REL} EC2 Snapshot",
+    "Description": "${DESC} Snapshot",
     "Format": "raw",
     "UserBucket": {
         "S3Bucket": "clone-vm-images",
@@ -89,7 +107,7 @@ done
 SNAPSHOT_ID="$(cat /tmp/results | jq -r '.ImportSnapshotTasks[0].SnapshotTaskDetail.SnapshotId')"
 echo "Snapshot Id is: ${SNAPSHOT_ID}."
 aws ec2 register-image \
-    --name "Fedora ${REL} Secure Boot" \
+    --name "${DESC} Secure Boot" \
     --block-device-mappings "DeviceName=/dev/sda1,Ebs={SnapshotId=${SNAPSHOT_ID},DeleteOnTermination=true}" \
     --architecture x86_64 \
     --root-device-name /dev/sda1 \
